@@ -1,7 +1,8 @@
 #include <algorithm>
 #include <bitset>
 #include <climits>
-#include <map>
+#include <vector>
+#include <unordered_map>
 #include <set>
 #include <cstdlib>
 #include <iostream>
@@ -43,6 +44,15 @@ static unsigned log2_ceil(uint32_t x)
 }
 
 namespace {
+  typedef std::unordered_map<uint32_t,uint32_t> IntMap;
+
+  struct CodeCost {
+    unsigned bytes;
+    unsigned cycles;
+    CodeCost() : bytes(0), cycles(0) {}
+    CodeCost(unsigned bytes, unsigned cycles) : bytes(bytes), cycles(cycles) {}
+  };
+
   class Step {
   public:
     enum Result {
@@ -52,6 +62,7 @@ namespace {
     };
     virtual Result apply(uint32_t &) const = 0;
     virtual void print(std::ostream &) const = 0;
+    virtual CodeCost compute_cost() const = 0;
   };
 
   enum class DataType {
@@ -63,11 +74,49 @@ namespace {
     U32
   };
 
+  static bool is_signed(DataType type)
+  {
+    switch (type) {
+    case DataType::S8:
+    case DataType::S16:
+    case DataType::S32:
+      return true;
+    case DataType::U8:
+    case DataType::U16:
+    case DataType::U32:
+      return false;
+    }
+  }
+
+  static unsigned get_size(DataType type)
+  {
+    switch (type) {
+    case DataType::S8:
+    case DataType::U8:
+      return 1;
+    case DataType::S16:
+    case DataType::U16:
+      return 2;
+    case DataType::S32:
+    case DataType::U32:
+      return 4;
+    }
+  }
+
+  static uint32_t get_lookup_table_size(const IntMap &map)
+  {
+    uint32_t size = 0;
+    for (const auto &entry : map) {
+      size = std::max(size, entry.first);
+    }
+    return size;
+  }
+
   class LookupTableStep : public Step {
-    std::map<uint32_t,uint32_t> table;
+    IntMap table;
     DataType type;
   public:
-    LookupTableStep(std::map<uint32_t,uint32_t> table, DataType type) :
+    LookupTableStep(IntMap table, DataType type) :
       table(table), type(type) {}
     Result apply(uint32_t &x) const override {
       auto match = table.find(x);
@@ -77,15 +126,20 @@ namespace {
       return NEXT;
     }
     void print(std::ostream &out) const override;
+    CodeCost compute_cost() const override {
+      unsigned num_bytes = get_lookup_table_size(table) * get_size(type);
+      num_bytes += 4 + 2;
+      return CodeCost(num_bytes, 2);
+    }
   };
 
   class CrcLookupAndReturnStep : public Step {
     uint32_t poly;
-    std::map<uint32_t,uint32_t> table;
+    IntMap table;
     DataType type;
     uint32_t collision_sentinal;
   public:
-    CrcLookupAndReturnStep(uint32_t poly, std::map<uint32_t,uint32_t> table,
+    CrcLookupAndReturnStep(uint32_t poly, IntMap table,
                            DataType type, uint32_t sentinal) :
       poly(poly), table(table), type(type), collision_sentinal(sentinal) {}
     Result apply(uint32_t &x) const override {
@@ -100,20 +154,59 @@ namespace {
       return NEXT;
     }
     void print(std::ostream &out) const override;
+    CodeCost compute_cost() const override {
+      unsigned num_bytes = get_lookup_table_size(table) * get_size(type);
+      num_bytes += 4 + 2 + 4 + 2 + 2;
+      return CodeCost(num_bytes, 5);
+    }
   };
 
   class CrcStep : public Step {
     uint32_t poly;
   public:
     CrcStep(uint32_t poly) : poly(poly) {}
-    virtual Result apply(uint32_t &x) const override {
+    Result apply(uint32_t &x) const override {
       x = crc32(x, poly, poly);
       return NEXT;
     }
-    virtual void print(std::ostream &out) const override {
+    void print(std::ostream &out) const override {
       out << "  crc32(x, 0x" << poly << ", 0x" << poly << ");\n";
     }
+    CodeCost compute_cost() const override {
+      return CodeCost(4 + 2, 2);
+    }
   };
+
+  struct HashCost {
+    unsigned num_collisions;
+    uint32_t table_size;
+    HashCost() : num_collisions(0), table_size(0) {}
+    HashCost(unsigned num_collisions, uint32_t table_size) :
+      num_collisions(num_collisions), table_size(table_size) {}
+    static HashCost max() {
+      return HashCost(std::numeric_limits<unsigned>::max(),
+                      std::numeric_limits<uint32_t>::max());
+    }
+  };
+}
+
+static CodeCost &operator+=(CodeCost &a, const CodeCost b)
+{
+  a.bytes += b.bytes;
+  a.cycles += b.cycles;
+  return a;
+}
+
+static bool operator<(const HashCost &a, const HashCost &b)
+{
+  if (a.num_collisions != b.num_collisions)
+    return a.num_collisions < b.num_collisions;
+  return a.table_size < b.table_size;
+}
+
+static bool operator>=(const HashCost &a, const HashCost &b)
+{
+  return !(a < b);
 }
 
 static const char *get_type_name(DataType type)
@@ -134,29 +227,17 @@ static const char *get_type_name(DataType type)
   }
 }
 
-bool is_signed(DataType type)
-{
-  switch (type) {
-  case DataType::S8:
-  case DataType::S16:
-  case DataType::S32:
-    return true;
-  case DataType::U8:
-  case DataType::U16:
-  case DataType::U32:
-    return false;
-  }
-}
-
 static void
-print_lookup_table(std::ostream &out, const std::map<uint32_t,uint32_t> &table,
+print_lookup_table(std::ostream &out, const IntMap &table,
                    DataType type)
 {
   out << "    static const " << get_type_name(type) << " lookup[] = {\n";
   unsigned i = 0;
-  for (const auto &entry : table) {
+  std::vector<std::pair<uint32_t,uint32_t>> entries(table.begin(), table.end());
+  std::sort(entries.begin(), entries.end());
+  for (const auto &entry : entries) {
     for (; i < entry.first; i++) {
-      out << "      0, /* unused */\n";
+      out << "      0, /* " << i << " -> unused */\n";
     }
     if (is_signed(type)) {
       out << "      " << static_cast<int32_t>(entry.second) << ',';
@@ -190,9 +271,9 @@ void CrcLookupAndReturnStep::print(std::ostream &out) const
   out << "  };\n";
 }
 
-static std::map<uint32_t,uint32_t> readmap()
+static IntMap readmap()
 {
-  std::map<uint32_t,uint32_t> map{
+  IntMap map{
     {0, 0},
     {1, 2},
     {2, 3},
@@ -204,14 +285,14 @@ static std::map<uint32_t,uint32_t> readmap()
 
 namespace {
   template <typename T> bool
-  apply_hash_to_map(const std::map<uint32_t,uint32_t> &map, T hash,
-                    unsigned max_collisions,
+  apply_hash_to_map(const IntMap &map, T hash,
+                    const HashCost &best_cost,
                     uint32_t collision_sentinal,
-                    std::map<uint32_t,uint32_t> &result,
-                    uint32_t &num_collisions)
+                    IntMap &result,
+                    HashCost &cost)
   {
-    num_collisions = 0;
-    std::map<uint32_t, uint32_t> reduced;
+    cost = HashCost();
+    IntMap reduced;
     for (const auto &entry : map) {
       uint32_t value = hash(entry.first);
       auto res = reduced.insert(std::make_pair(value, entry.second));
@@ -219,31 +300,36 @@ namespace {
           res.first->second == collision_sentinal)
         continue;
       // Handle collisions.
-      if (++num_collisions > max_collisions) {
+      ++cost.num_collisions;
+      if (cost >= best_cost)
         return false;
-      }
       res.first->second = collision_sentinal;
     }
+    cost.table_size = get_lookup_table_size(reduced);
+    if (cost >= best_cost)
+      return false;
     result = std::move(reduced);
     return true;
   }
   
   template <typename T>
-  bool apply_hash_to_map(const std::map<uint32_t,uint32_t> &map, T hash,
-                         std::map<uint32_t,uint32_t> &result)
+  bool apply_hash_to_map(const IntMap &map, T hash,
+                         IntMap &result)
   {
-    unsigned num_collisions;
-    return apply_hash_to_map(map, hash, 0, 0, result, num_collisions);
+    HashCost dummy;
+    auto cost = HashCost::max();
+    cost.num_collisions = 0;
+    return apply_hash_to_map(map, hash, cost, 0, result, dummy);
   }
 
   template <typename T>
-  bool apply_hash_to_map_inplace(std::map<uint32_t,uint32_t> &map, T hash)
+  bool apply_hash_to_map_inplace(IntMap &map, T hash)
   {
     return apply_hash_to_map(map, hash, map);
   }
 
   template <typename T> std::bitset<32>
-  reduce_using_bitop(std::map<uint32_t,uint32_t> &map, T op)
+  reduce_using_bitop(IntMap &map, T op)
   {
     std::bitset<32> mask;
     for (int bit = 31; bit >= 0; bit--) {
@@ -259,20 +345,11 @@ namespace {
   }
 }
 
-static std::bitset<32> reduce_using_and(std::map<uint32_t,uint32_t> &map)
+static std::bitset<32> reduce_using_and(IntMap &map)
 {
   std::bitset<32> mask =
     reduce_using_bitop(map, [](uint32_t a, uint32_t b) { return a & ~b; });
   return mask.flip();
-}
-
-static uint32_t get_lookup_table_size(const std::map<uint32_t,uint32_t> &map)
-{
-  uint32_t size = 0;
-  for (const auto &entry : map) {
-    size = std::max(size, entry.first);
-  }
-  return size;
 }
 
 static uint32_t find_unused_value(const std::set<uint32_t> &values)
@@ -286,7 +363,7 @@ static uint32_t find_unused_value(const std::set<uint32_t> &values)
   return values.size();
 }
 
-static DataType pick_datatype(const std::map<uint32_t,uint32_t> &lookup)
+static DataType pick_datatype(const IntMap &lookup)
 {
   uint32_t max_u = 0;
   int32_t min_s = 0;
@@ -314,7 +391,7 @@ static DataType pick_datatype(const std::map<uint32_t,uint32_t> &lookup)
 }
 
 static void
-reduce_using_crc(std::map<uint32_t,uint32_t> &map,
+reduce_using_crc(IntMap &map,
                  bool allow_conflicts,
                  std::vector<std::unique_ptr<Step>> &steps)
 {
@@ -328,34 +405,27 @@ reduce_using_crc(std::map<uint32_t,uint32_t> &map,
     unique_values.insert(collision_sentinal);
   }
   uint32_t best = 0;
-  uint32_t best_size = std::numeric_limits<uint32_t>::max();
+  HashCost best_cost = HashCost::max();
+  if (!allow_conflicts) {
+    best_cost.num_collisions = 0;
+    best_cost.table_size = get_lookup_table_size(map);
+    if (best_cost.table_size <= 4)
+      return;
+    best_cost.table_size -= 4;
+  }
   unsigned min_width = log2_ceil(unique_values.size()) - 1;
   for (unsigned width = min_width; width < 32; width++) {
     for (uint32_t poly = 1 << width; poly < (1 << (width + 1));
          poly++) {
-      std::map<uint32_t,uint32_t> tmp;
+      IntMap tmp;
       auto hash = [=](uint32_t x) {
         return crc32(x, poly, poly);
       };
-      if (allow_conflicts) {
-        uint32_t size;
-        if (apply_hash_to_map(map, hash, best_size - 1, collision_sentinal, tmp,
-                              size)) {
-          if (size < best_size) {
-            best = poly;
-            best_size = size;
-            if (size == 0)
-              break;
-          }
-        }
-      } else {
-        if (apply_hash_to_map(map, hash, tmp)) {
-          uint32_t size = get_lookup_table_size(tmp);
-          if (size < best_size) {
-            best = poly;
-            best_size = size;
-          }
-        }
+      HashCost cost;
+      if (apply_hash_to_map(map, hash, best_cost, collision_sentinal, tmp,
+                            cost)) {
+        best = poly;
+        best_cost = cost;
       }
     }
     // Don't check polynomials of higher widths - we are unlikely to get any
@@ -365,15 +435,14 @@ reduce_using_crc(std::map<uint32_t,uint32_t> &map,
   }
   if (best == 0)
     return;
-  if (best_size + 4 >= get_lookup_table_size(map))
-    return;
   auto hash = [=](uint32_t x) {
     return crc32(x, best, best);
   };
   if (allow_conflicts) {
-    uint32_t dummy;
-    std::map<uint32_t,uint32_t> lookup;
-    apply_hash_to_map(map, hash, best_size, collision_sentinal, lookup, dummy);
+    HashCost dummy;
+    IntMap lookup;
+    apply_hash_to_map(map, hash, HashCost::max(), collision_sentinal, lookup,
+                      dummy);
     DataType data_type = pick_datatype(lookup);
     steps.push_back(
       std::unique_ptr<Step>(
@@ -382,7 +451,7 @@ reduce_using_crc(std::map<uint32_t,uint32_t> &map,
       )
     );
     // Build map containing only conflicting keys.
-    std::map<uint32_t,uint32_t> remaining;
+    IntMap remaining;
     for (const auto &entry : map) {
       uint32_t x = entry.first;
       if (steps.back()->apply(x) != Step::DONE) {
@@ -396,7 +465,7 @@ reduce_using_crc(std::map<uint32_t,uint32_t> &map,
   }
 }
 
-static unsigned reduce_using_shift(std::map<uint32_t,uint32_t> &map)
+static unsigned reduce_using_shift(IntMap &map)
 {
   unsigned shift;
   for (shift = 0; shift < 32; shift++) {
@@ -420,7 +489,17 @@ static void print(const std::vector<std::unique_ptr<Step>> &steps)
   std::cout << "}\n";
 }
 
-static bool validate(const std::map<uint32_t, uint32_t> &map,
+static void stats(const std::vector<std::unique_ptr<Step>> &steps)
+{
+  CodeCost cost;
+  for (const auto &step : steps) {
+    cost += step->compute_cost();
+  }
+  std::cerr << "Number of bytes: " << cost.bytes << '\n';
+  std::cerr << "Number of cycles: " << cost.cycles << '\n';
+}
+
+static bool validate(const IntMap &map,
                      const std::vector<std::unique_ptr<Step>> &steps)
 {
   for (const auto &entry : map) {
@@ -439,9 +518,9 @@ static bool validate(const std::map<uint32_t, uint32_t> &map,
   return true;
 }
 
-static std::map<uint32_t,uint32_t> testmap()
+static IntMap testmap()
 {
-  std::map<uint32_t,uint32_t> map;
+  IntMap map;
   std::default_random_engine generator;
   std::uniform_int_distribution<int> distribution;
   auto rand = std::bind(distribution, generator);
@@ -451,9 +530,9 @@ static std::map<uint32_t,uint32_t> testmap()
   return map;
 }
 
-static std::map<uint32_t,uint32_t> testmap2()
+static IntMap testmap2()
 {
-  std::map<uint32_t,uint32_t> map;
+  IntMap map;
   for (unsigned i = 0; i < 256; i++) {
     unsigned unzipped = 0;
     for (unsigned j = 0; j < 8; j++) {
@@ -469,7 +548,7 @@ static std::map<uint32_t,uint32_t> testmap2()
 int main()
 {
   std::vector<std::unique_ptr<Step>> steps;
-  const unsigned max_stages = 4;
+  const unsigned max_stages = 8;
   const auto map = testmap();
   auto lookup = map;
   for (unsigned i = 0; i != max_stages; i++) {
@@ -485,5 +564,6 @@ int main()
     std::cerr << "Failed validation\n";
     std::exit(1);
   }
+  stats(steps);
   return 0;
 }
