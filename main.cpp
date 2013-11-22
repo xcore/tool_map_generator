@@ -235,8 +235,8 @@ print_lookup_table(std::ostream &out, const IntMap &table,
 {
   out << "    static const " << get_type_name(type) << " lookup[] = {\n";
   unsigned i = 0;
-  std::vector<std::pair<uint32_t,uint32_t>> entries(table.begin(), table.end());
-  std::sort(entries.begin(), entries.end());
+  std::vector<std::pair<uint32_t,uint32_t>> entries(begin(table), end(table));
+  std::sort(begin(entries), end(entries));
   for (const auto &entry : entries) {
     for (; i < entry.first; i++) {
       out << "      0, /* " << i << " -> unused */\n";
@@ -395,7 +395,7 @@ reduce_using_crc(IntMap &map,
                  bool allow_conflicts,
                  std::vector<std::unique_ptr<Step>> &steps)
 {
-  IntPairs map_entries(map.begin(), map.end());
+  IntPairs map_entries(begin(map), end(map));
   std::set<uint32_t> unique_values;
   for (const auto &entry : map_entries) {
     unique_values.insert(entry.second);
