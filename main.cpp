@@ -45,6 +45,7 @@ static unsigned log2_ceil(uint32_t x)
 
 namespace {
   typedef std::unordered_map<uint32_t,uint32_t> IntMap;
+  typedef std::vector<IntMap::value_type> IntPairs;
 
   struct CodeCost {
     unsigned bytes;
@@ -103,7 +104,8 @@ namespace {
     }
   }
 
-  static uint32_t get_lookup_table_size(const IntMap &map)
+  template <typename T>
+  uint32_t get_lookup_table_size(const T &map)
   {
     uint32_t size = 0;
     for (const auto &entry : map) {
@@ -285,7 +287,7 @@ static IntMap readmap()
 
 namespace {
   template <typename T> bool
-  apply_hash_to_map(const IntMap &map, T hash,
+  apply_hash_to_map(const IntPairs &map, T hash,
                     const HashCost &best_cost,
                     uint32_t collision_sentinal,
                     IntMap &result,
@@ -313,7 +315,7 @@ namespace {
   }
   
   template <typename T>
-  bool apply_hash_to_map(const IntMap &map, T hash,
+  bool apply_hash_to_map(const IntPairs &map, T hash,
                          IntMap &result)
   {
     HashCost dummy;
@@ -322,12 +324,7 @@ namespace {
     return apply_hash_to_map(map, hash, cost, 0, result, dummy);
   }
 
-  template <typename T>
-  bool apply_hash_to_map_inplace(IntMap &map, T hash)
-  {
-    return apply_hash_to_map(map, hash, map);
-  }
-
+#if 0
   template <typename T> std::bitset<32>
   reduce_using_bitop(IntMap &map, T op)
   {
@@ -343,14 +340,17 @@ namespace {
     }
     return mask;
   }
+#endif
 }
 
+#if 0
 static std::bitset<32> reduce_using_and(IntMap &map)
 {
   std::bitset<32> mask =
     reduce_using_bitop(map, [](uint32_t a, uint32_t b) { return a & ~b; });
   return mask.flip();
 }
+#endif
 
 static uint32_t find_unused_value(const std::set<uint32_t> &values)
 {
@@ -395,8 +395,9 @@ reduce_using_crc(IntMap &map,
                  bool allow_conflicts,
                  std::vector<std::unique_ptr<Step>> &steps)
 {
+  IntPairs map_entries(map.begin(), map.end());
   std::set<uint32_t> unique_values;
-  for (const auto &entry : map) {
+  for (const auto &entry : map_entries) {
     unique_values.insert(entry.second);
   }
   uint32_t collision_sentinal;
@@ -408,7 +409,7 @@ reduce_using_crc(IntMap &map,
   HashCost best_cost = HashCost::max();
   if (!allow_conflicts) {
     best_cost.num_collisions = 0;
-    best_cost.table_size = get_lookup_table_size(map);
+    best_cost.table_size = get_lookup_table_size(map_entries);
     if (best_cost.table_size <= 4)
       return;
     best_cost.table_size -= 4;
@@ -422,8 +423,8 @@ reduce_using_crc(IntMap &map,
         return crc32(x, poly, poly);
       };
       HashCost cost;
-      if (apply_hash_to_map(map, hash, best_cost, collision_sentinal, tmp,
-                            cost)) {
+      if (apply_hash_to_map(map_entries, hash, best_cost, collision_sentinal,
+                            tmp, cost)) {
         best = poly;
         best_cost = cost;
       }
@@ -441,8 +442,8 @@ reduce_using_crc(IntMap &map,
   if (allow_conflicts) {
     HashCost dummy;
     IntMap lookup;
-    apply_hash_to_map(map, hash, HashCost::max(), collision_sentinal, lookup,
-                      dummy);
+    apply_hash_to_map(map_entries, hash, HashCost::max(), collision_sentinal,
+                      lookup, dummy);
     DataType data_type = pick_datatype(lookup);
     steps.push_back(
       std::unique_ptr<Step>(
@@ -460,11 +461,12 @@ reduce_using_crc(IntMap &map,
     }
     std::swap(map, remaining);
   } else {
-    apply_hash_to_map_inplace(map, hash);
+    apply_hash_to_map(map_entries, hash, map);
     steps.push_back(std::unique_ptr<Step>(new CrcStep(best)));
   }
 }
 
+#if 0
 static unsigned reduce_using_shift(IntMap &map)
 {
   unsigned shift;
@@ -477,6 +479,7 @@ static unsigned reduce_using_shift(IntMap &map)
   }
   return shift;
 }
+#endif
 
 static void print(const std::vector<std::unique_ptr<Step>> &steps)
 {
@@ -524,7 +527,7 @@ static IntMap testmap()
   std::default_random_engine generator;
   std::uniform_int_distribution<int> distribution;
   auto rand = std::bind(distribution, generator);
-  for (unsigned i = 0; i < 1000; i++) {
+  for (unsigned i = 0; i < 4000; i++) {
     map.insert(std::make_pair(rand(), rand()));
   }
   return map;
