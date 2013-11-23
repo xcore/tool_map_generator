@@ -93,7 +93,7 @@ namespace {
     for (const auto &entry : map) {
       size = std::max(size, entry.first);
     }
-    return size;
+    return size + 1;
   }
 
   class LookupTableStep : public Step {
@@ -366,6 +366,10 @@ reduce_using_crc(IntMap &map,
   tmp.reserve(map_entries.size());
   unsigned min_width = log2_ceil(num_unique_values) - 1;
   for (unsigned width = min_width; width < 32; width++) {
+    // Don't check polynomials of higher widths - we are unlikely to get any
+    // further improvement.
+    if (best != 0 || (1 << width) > best_cost.table_size)
+      break;
     for (uint32_t poly = 1 << width; poly < (1 << (width + 1));
          poly++) {
       auto hash = [=](uint32_t x) {
@@ -378,10 +382,6 @@ reduce_using_crc(IntMap &map,
         best_cost = cost;
       }
     }
-    // Don't check polynomials of higher widths - we are unlikely to get any
-    // further improvement.
-    if (best != 0)
-      break;
   }
   if (best == 0)
     return;
@@ -478,4 +478,3 @@ Steps map_generator::generate(const IntMap &map, unsigned max_steps)
   assert(validate(map, steps));
   return Steps(std::move(steps));
 }
-
