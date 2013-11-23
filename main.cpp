@@ -11,24 +11,17 @@
 #include <numeric>
 #include <cassert>
 
-namespace {
-  template <typename T> uint32_t crc(uint32_t checksum, T data, uint32_t poly) {
-    for (unsigned i = 0; i < sizeof(T) * CHAR_BIT; i++) {
-      int xorBit = (checksum & 1);
-      
-      checksum  = (checksum >> 1) | ((data & 1) << 31);
-      data = data >> 1;
-      
-      if (xorBit)
-        checksum = checksum ^ poly;
-    }
-    return checksum;
-  }
-}
-
 static uint32_t crc32(uint32_t checksum, uint32_t data, uint32_t poly)
 {
-  return crc<uint32_t>(checksum, data, poly);
+  for (unsigned i = 0; i < 32; i++) {
+    int xorBit = (checksum & 1);
+
+    checksum >>= 1;
+
+    if (xorBit)
+      checksum = checksum ^ poly;
+  }
+  return data ^ checksum;
 }
 
 static unsigned clz(uint32_t x)
@@ -119,7 +112,7 @@ namespace {
     DataType type;
   public:
     LookupTableStep(IntMap table, DataType type) :
-      table(table), type(type) {}
+    table(std::move(table)), type(type) {}
     Result apply(uint32_t &x) const override {
       auto match = table.find(x);
       if (match == table.end())
@@ -143,7 +136,8 @@ namespace {
   public:
     CrcLookupAndReturnStep(uint32_t poly, IntMap table,
                            DataType type, uint32_t sentinal) :
-      poly(poly), table(table), type(type), collision_sentinal(sentinal) {}
+    poly(poly), table(std::move(table)), type(type),
+    collision_sentinal(sentinal) {}
     Result apply(uint32_t &x) const override {
       uint32_t tmp = crc32(x, poly, poly);
       auto match = table.find(tmp);
@@ -294,10 +288,10 @@ namespace {
                     HashCost &cost)
   {
     cost = HashCost();
-    IntMap reduced;
+    result.clear();
     for (const auto &entry : map) {
       uint32_t value = hash(entry.first);
-      auto res = reduced.insert(std::make_pair(value, entry.second));
+      auto res = result.insert(std::make_pair(value, entry.second));
       if (res.second || res.first->second == entry.second ||
           res.first->second == collision_sentinal)
         continue;
@@ -307,10 +301,9 @@ namespace {
         return false;
       res.first->second = collision_sentinal;
     }
-    cost.table_size = get_lookup_table_size(reduced);
+    cost.table_size = get_lookup_table_size(result);
     if (cost >= best_cost)
       return false;
-    result = std::move(reduced);
     return true;
   }
   
@@ -352,7 +345,7 @@ static std::bitset<32> reduce_using_and(IntMap &map)
 }
 #endif
 
-static uint32_t find_unused_value(const std::set<uint32_t> &values)
+static uint32_t find_unused_value(const std::vector<uint32_t> &values)
 {
   unsigned i = 0;
   for (auto value : values) {
@@ -396,14 +389,19 @@ reduce_using_crc(IntMap &map,
                  std::vector<std::unique_ptr<Step>> &steps)
 {
   IntPairs map_entries(begin(map), end(map));
-  std::set<uint32_t> unique_values;
+  std::vector<uint32_t> unique_values;
+  unique_values.reserve(map_entries.size());
   for (const auto &entry : map_entries) {
-    unique_values.insert(entry.second);
+    unique_values.push_back(entry.second);
   }
+  std::sort(unique_values.begin(), unique_values.end());
+  unique_values.erase(std::unique(unique_values.begin(), unique_values.end()),
+                      unique_values.end());
+  unsigned num_unique_values = unique_values.size();
   uint32_t collision_sentinal;
   if (allow_conflicts) {
     collision_sentinal = find_unused_value(unique_values);
-    unique_values.insert(collision_sentinal);
+    ++num_unique_values;
   }
   uint32_t best = 0;
   HashCost best_cost = HashCost::max();
@@ -414,11 +412,12 @@ reduce_using_crc(IntMap &map,
       return;
     best_cost.table_size -= 4;
   }
-  unsigned min_width = log2_ceil(unique_values.size()) - 1;
+  IntMap tmp;
+  tmp.reserve(map_entries.size());
+  unsigned min_width = log2_ceil(num_unique_values) - 1;
   for (unsigned width = min_width; width < 32; width++) {
     for (uint32_t poly = 1 << width; poly < (1 << (width + 1));
          poly++) {
-      IntMap tmp;
       auto hash = [=](uint32_t x) {
         return crc32(x, poly, poly);
       };
@@ -441,13 +440,12 @@ reduce_using_crc(IntMap &map,
   };
   if (allow_conflicts) {
     HashCost dummy;
-    IntMap lookup;
     apply_hash_to_map(map_entries, hash, HashCost::max(), collision_sentinal,
-                      lookup, dummy);
-    DataType data_type = pick_datatype(lookup);
+                      tmp, dummy);
+    DataType data_type = pick_datatype(tmp);
     steps.push_back(
       std::unique_ptr<Step>(
-        new CrcLookupAndReturnStep(best, std::move(lookup), data_type,
+        new CrcLookupAndReturnStep(best, std::move(tmp), data_type,
                                    collision_sentinal)
       )
     );
