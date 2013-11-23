@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 2.8)
 project(map_generator)
+enable_testing()
 
 if(CMAKE_COMPILER_IS_GNUCXX)
   set(COMPILER_IS_GCC_COMPATIBLE ON)
@@ -23,11 +24,14 @@ add_library(map_generator
 add_executable(
   map_generator_bin
   main.cpp)
+set_target_properties(map_generator_bin PROPERTIES OUTPUT_NAME map_generator)
 
 target_link_libraries(map_generator_bin map_generator)
 
 add_executable(
-  test_bin
+  map_generator_test
   test.cpp)
 
-target_link_libraries(test_bin map_generator)
+target_link_libraries(map_generator_test map_generator)
+
+add_test(map_generator_test map_generator_test)

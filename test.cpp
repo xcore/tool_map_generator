@@ -26,10 +26,25 @@ static map_generator::IntMap unzip_map()
   return map;
 }
 
+// Should just use a straight table lookup.
+static map_generator::IntMap uncompressible_map()
+{
+  return {
+    {1, 2},
+    {3, 4},
+    {4, 6},
+    {6, 8},
+  };
+}
+
+
 int main()
 {
   map_generator::Steps steps = map_generator::generate(unzip_map(), 1);
   map_generator::CodeCost cost = steps.compute_cost();
   VERIFY(cost.bytes == 268);
+  steps = map_generator::generate(uncompressible_map(), 1);
+  cost = steps.compute_cost();
+  VERIFY(cost.cycles == 2);
   return 0;
 }

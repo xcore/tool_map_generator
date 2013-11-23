@@ -424,6 +424,11 @@ Steps::~Steps() {
 Steps::Steps(Steps &&other) : steps(std::move(other.steps)) {
 }
 
+Steps &Steps::operator=(Steps &&other) {
+  steps = std::move(other.steps);
+  return *this;
+}
+
 void Steps::print(std::ostream &out)
 {
   out << "uint32_t map(uint32_t x)\n";

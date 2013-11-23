@@ -21,6 +21,7 @@ namespace map_generator {
     Steps(std::vector<std::unique_ptr<Step>> steps);
     ~Steps();
     Steps(Steps &&);
+    Steps &operator=(Steps &&);
 
     void print(std::ostream &);
     CodeCost compute_cost();
