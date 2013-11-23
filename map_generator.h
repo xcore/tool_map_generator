@@ -23,12 +23,16 @@ namespace map_generator {
     Steps(Steps &&);
     Steps &operator=(Steps &&);
 
+    /// Emit a C function implementing the steps.
     void print(std::ostream &);
+    /// Estimate the cost of the sequence of steps.
     CodeCost compute_cost();
   };
 
   typedef std::unordered_map<uint32_t,uint32_t> IntMap;
 
+  /// Generate a sequence of steps implementing the specified map.
+  /// \param max_steps The maximum number of steps to use.
   Steps generate(const IntMap &map, unsigned max_steps = 1);
 }
 

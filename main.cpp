@@ -11,7 +11,10 @@ using map_generator::IntMap;
 using map_generator::Steps;
 using map_generator::CodeCost;
 
-IntMap read_map(std::istream &in)
+/// Read comma separated list of integers representing a map. There must be an
+/// an even number of integers - even numbers are keys, odd numbers are values.
+/// For example the string "1,5,8,1" specifies a map where 1 -> 5 and 8 -> 1.
+static IntMap read_map(std::istream &in)
 {
   IntMap map;
   std::string contents;
@@ -53,7 +56,7 @@ IntMap read_map(std::istream &in)
   return map;
 }
 
-IntMap read_map(const char *filename)
+static IntMap read_map(const char *filename)
 {
   std::ifstream in(filename);
   if (!in) {
