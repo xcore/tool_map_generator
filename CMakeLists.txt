@@ -34,4 +34,10 @@ add_executable(
 
 target_link_libraries(map_generator_test map_generator)
 
+add_executable(
+  load_store_map
+  load_store_map.cpp)
+
+target_link_libraries(load_store_map map_generator)
+
 add_test(map_generator_test map_generator_test)
