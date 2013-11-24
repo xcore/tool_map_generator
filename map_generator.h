@@ -3,6 +3,7 @@
 
 #include <unordered_map>
 #include <vector>
+#include <string>
 #include <iosfwd>
 
 namespace map_generator {
@@ -24,7 +25,7 @@ namespace map_generator {
     Steps &operator=(Steps &&);
 
     /// Emit a C function implementing the steps.
-    void print(std::ostream &);
+    void print(std::ostream &, const std::string &name = "map");
     /// Estimate the cost of the sequence of steps.
     CodeCost compute_cost();
   };

@@ -429,9 +429,9 @@ Steps &Steps::operator=(Steps &&other) {
   return *this;
 }
 
-void Steps::print(std::ostream &out)
+void Steps::print(std::ostream &out, const std::string &name)
 {
-  out << "uint32_t map(uint32_t x)\n";
+  out << "uint32_t " << name << "(uint32_t x)\n";
   out << "{\n";
   for (const auto &step : steps) {
     step->print(out);
