@@ -5,6 +5,7 @@
 #include <ostream>
 #include <numeric>
 #include <cassert>
+#include <bitset>
 
 using namespace map_generator;
 
@@ -162,6 +163,24 @@ namespace {
     }
   };
 
+  class AndNotStep : public Step {
+    uint32_t mask;
+  public:
+    AndNotStep(uint32_t mask) : mask(mask) {}
+    Result apply(uint32_t &x) const override {
+      x &= ~mask;
+      return NEXT;
+    }
+    void print(std::ostream &out) const override {
+      out << std::hex;
+      out << "  x &= " << ~mask << ";\n";
+      out << std::dec;
+    }
+    CodeCost compute_cost() const override {
+      return CodeCost(6, 2);
+    }
+  };
+
   struct HashCost {
     unsigned num_collisions;
     uint32_t table_size;
@@ -257,8 +276,8 @@ void CrcLookupAndReturnStep::print(std::ostream &out) const
 }
 
 namespace {
-  template <typename T> bool
-  apply_hash_to_map(const IntPairs &map, T hash,
+  template <typename Map, typename T> bool
+  apply_hash_to_map(const Map &map, T hash,
                     const HashCost &best_cost,
                     uint32_t collision_sentinal,
                     IntMap &result,
@@ -284,8 +303,8 @@ namespace {
     return true;
   }
 
-  template <typename T>
-  bool apply_hash_to_map(const IntPairs &map, T hash,
+  template <typename Map, typename T>
+  bool apply_hash_to_map(const Map &map, T hash,
                          IntMap &result)
   {
     HashCost dummy;
@@ -411,6 +430,29 @@ reduce_using_crc(IntMap &map,
   } else {
     apply_hash_to_map(map_entries, hash, map);
     steps.push_back(std::unique_ptr<Step>(new CrcStep(best)));
+
+static void
+reduce_using_and(IntMap &map, std::vector<std::unique_ptr<Step>> &steps)
+{
+  IntPairs map_entries(begin(map), end(map));
+  IntMap tmp;
+  tmp.reserve(map_entries.size());
+  std::bitset<32> mask;
+  for (int bit = 31; bit >= 0; bit--) {
+    auto candidate_mask = mask;
+    candidate_mask.set(bit);
+    auto bitmask = ~static_cast<uint32_t>(candidate_mask.to_ulong());
+    auto hash = [=](uint32_t x) {
+      return x & bitmask;
+    };
+    if (apply_hash_to_map(map_entries, hash, tmp) &&
+        tmp.size() < map_entries.size()) {
+      std::swap(map, tmp);
+      mask = candidate_mask;
+    }
+  }
+  if (mask.any()) {
+    steps.push_back(std::unique_ptr<Step>(new AndNotStep(mask.to_ulong())));
   }
 }
 
@@ -472,6 +514,7 @@ Steps map_generator::generate(const IntMap &map, unsigned max_steps)
 {
   std::vector<std::unique_ptr<Step>> steps;
   auto lookup = map;
+  reduce_using_and(lookup, steps);
   for (unsigned i = 0; i != max_steps; i++) {
     bool allow_collisions = i + 1 != max_steps;
     reduce_using_crc(lookup, allow_collisions, steps);
