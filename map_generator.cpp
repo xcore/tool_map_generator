@@ -288,11 +288,14 @@ namespace {
     for (const auto &entry : map) {
       uint32_t value = hash(entry.first);
       auto res = result.insert(std::make_pair(value, entry.second));
-      if (res.second || res.first->second == entry.second ||
-          res.first->second == collision_sentinal)
+      if (res.second || res.first->second == entry.second)
         continue;
+      if (res.first->second == collision_sentinal) {
+        ++cost.num_collisions;
+        continue;
+      }
       // Handle collisions.
-      ++cost.num_collisions;
+      cost.num_collisions += 2;
       if (cost >= best_cost)
         return false;
       res.first->second = collision_sentinal;
@@ -352,7 +355,7 @@ static DataType pick_datatype(const IntMap &lookup)
   return DataType::U32;
 }
 
-static void
+static bool
 reduce_using_crc(IntMap &map,
                  bool allow_conflicts,
                  std::vector<std::unique_ptr<Step>> &steps)
@@ -374,11 +377,13 @@ reduce_using_crc(IntMap &map,
   }
   uint32_t best = 0;
   HashCost best_cost = HashCost::max();
-  if (!allow_conflicts) {
+  if (allow_conflicts) {
+    best_cost.num_collisions = map_entries.size() / 4;
+  } else {
     best_cost.num_collisions = 0;
     best_cost.table_size = get_lookup_table_size(map_entries);
     if (best_cost.table_size <= 4)
-      return;
+      return true;
     best_cost.table_size -= 4;
   }
   IntMap tmp;
@@ -403,11 +408,11 @@ reduce_using_crc(IntMap &map,
     }
   }
   if (best == 0)
-    return;
+    return true;
   auto hash = [=](uint32_t x) {
     return crc32(x, best, best);
   };
-  if (allow_conflicts) {
+  if (best_cost.num_collisions != 0) {
     HashCost dummy;
     apply_hash_to_map(map_entries, hash, HashCost::max(), collision_sentinal,
                       tmp, dummy);
@@ -427,9 +432,13 @@ reduce_using_crc(IntMap &map,
       }
     }
     std::swap(map, remaining);
+    return false;
   } else {
     apply_hash_to_map(map_entries, hash, map);
     steps.push_back(std::unique_ptr<Step>(new CrcStep(best)));
+    return true;
+  }
+}
 
 static void
 reduce_using_and(IntMap &map, std::vector<std::unique_ptr<Step>> &steps)
@@ -517,7 +526,8 @@ Steps map_generator::generate(const IntMap &map, unsigned max_steps)
   reduce_using_and(lookup, steps);
   for (unsigned i = 0; i != max_steps; i++) {
     bool allow_collisions = i + 1 != max_steps;
-    reduce_using_crc(lookup, allow_collisions, steps);
+    if (reduce_using_crc(lookup, allow_collisions, steps))
+      break;
   }
   DataType data_type = pick_datatype(lookup);
   steps.push_back(
