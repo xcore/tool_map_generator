@@ -156,7 +156,9 @@ namespace {
       return NEXT;
     }
     void print(std::ostream &out) const override {
+      out << std::hex;
       out << "  crc32(x, 0x" << poly << ", 0x" << poly << ");\n";
+      out << std::dec;
     }
     CodeCost compute_cost() const override {
       return CodeCost(4 + 2, 2);
@@ -267,7 +269,9 @@ void CrcLookupAndReturnStep::print(std::ostream &out) const
   out << "  {\n";
   print_lookup_table(out, table, type);
   out << "    uint32_t tmp = x;\n";
+  out << std::hex;
   out << "    crc32(tmp, 0x" << poly << ", 0x" << poly << ");\n";
+  out << std::dec;
   out << "    tmp = lookup[tmp];\n";
   out << "    if (tmp != " << collision_sentinal << ") {\n";
   out << "      return tmp;\n";
