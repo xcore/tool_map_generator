@@ -35,6 +35,12 @@ namespace {
     LONG_ST16,
     LONG_STW,
   };
+
+  enum MapType {
+    MAP_SHORT,
+    MAP_LONG,
+    MAP_REG
+  };
 }
 
 static struct {
@@ -98,13 +104,13 @@ static bool isShort(Encoding encoding)
   }
 }
 
-static IntMap load_store_map(bool shortEncoding)
+static IntMap load_store_map(MapType map_type)
 {
   IntMap map;
   for (unsigned i = 0; i != array_size(instructions); ++i) {
     const auto &instr = instructions[i];
     auto opcode = instr.opcode;
-    if (!shortEncoding && isShort(instr.encoding))
+    if (map_type == MAP_LONG && isShort(instr.encoding))
       continue;
     for (unsigned op0 = 0; op0 != 12; ++op0) {
       for (unsigned op1 = 0; op1 != 12; ++op1) {
@@ -120,12 +126,19 @@ static IntMap load_store_map(bool shortEncoding)
             break;
           }
           uint32_t type;
-          if (shortEncoding) {
+          switch (map_type) {
+          case MAP_SHORT:
             value &= 0xffff;
             type = instr.shortType;
-          } else {
+            break;
+          case MAP_REG:
+            value &= 0xffff;
+            type = op0;
+            break;
+          case MAP_LONG:
             value >>= 16;
             type = instr.longType;
+            break;
           }
           auto res = map.insert(std::make_pair(value, type));
           assert(res.second || res.first->second == type);
@@ -138,14 +151,20 @@ static IntMap load_store_map(bool shortEncoding)
 
 int main()
 {
-  Steps steps = generate(load_store_map(true), 10);
+  Steps steps = generate(load_store_map(MAP_SHORT), 10);
   steps.print(std::cout, "map_short");
   CodeCost cost = steps.compute_cost();
   std::cerr << "Number of bytes: " << cost.bytes << '\n';
   std::cerr << "Number of cycles: " << cost.cycles << '\n';
 
-  steps = generate(load_store_map(false), 10);
+  steps = generate(load_store_map(MAP_LONG), 10);
   steps.print(std::cout, "map_long");
+  cost = steps.compute_cost();
+  std::cerr << "Number of bytes: " << cost.bytes << '\n';
+  std::cerr << "Number of cycles: " << cost.cycles << '\n';
+
+  steps = generate(load_store_map(MAP_REG), 10);
+  steps.print(std::cout, "map_reg");
   cost = steps.compute_cost();
   std::cerr << "Number of bytes: " << cost.bytes << '\n';
   std::cerr << "Number of cycles: " << cost.cycles << '\n';
