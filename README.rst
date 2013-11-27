@@ -12,19 +12,19 @@ Map generator
 Key Features
 ============
 
-* The map_generator executable takes a file of key, value pairs and outputs C
-  code that implements the specified mapping.
+* The map_generator executable takes a list of key, value pairs and it emits C
+  code implementing the specified mapping.
 * The map_generator library provides an API for generating mapping code
   sequences / lookup tables.
 
 Description
 ===========
 
-The map_generator executable outputs C code that implements a mapping from a set
-of integer keys to a set of integer values. The crc instruction is used to map
-the set of keys on to a dense set of integers that are used as the index of a
-lookup table. A brute force search is used to find the polynomial which
-minimizes the lookup table size.
+The map generator emits C code that maps from a set of integer keys to a set of
+integer values. The crc instruction is used to map the set of keys on to a
+dense set of integers that are then used as the index of a lookup table. A
+brute force search is used to select the polynomial which minimizes the lookup
+table size.
 
 Support
 =======
