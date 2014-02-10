@@ -9,7 +9,6 @@
 #include <random>
 #include <cstdlib>
 #include <cctype>
-#include <regex>
 #include <numeric>
 
 using map_generator::IntMap;
@@ -27,36 +26,36 @@ static IntMap read_map(std::istream &in)
     auto c = in.get();
     if (!in.good())
       break;
+    if (std::isspace(c))
+      continue;
     contents.push_back(c);
   }
-  std::regex regex(R"(^(,?)(\d+)\s*,(\d+)\s*)");
-  auto it =
-  std::sregex_iterator(contents.begin(), contents.end(), regex);
-  auto end = std::sregex_iterator();
-  bool first = true;
-  for (; it != end;) {
-    auto match = *it;
-    bool leading_comma = match[1].length() != 0;
-    if (leading_comma == first) {
+  // Parse into a list of integers.
+  std::vector<long> values;
+  const char *p = contents.c_str();
+  while (*p != '\0') {
+    char *endp;
+    auto value = std::strtol(p, &endp, 10);
+    if (endp == p) {
       std::cerr << "error: unexpected format\n";
       std::exit(1);
     }
-    auto key_string = match[2];
-    auto value_string = match[3];
-    auto key = std::strtol(key_string.str().c_str(), nullptr, 10);
-    auto value = std::strtol(value_string.str().c_str(), nullptr, 10);
-    map.insert(std::make_pair(key, value));
-    first = false;
-    auto next = it;
-    ++next;
-    if (next == end) {
-      auto pos = it->position() + it->length();
-      if (pos != contents.length()) {
-        std::cerr << "error: unexpected format\n";
-        std::exit(1);
-      }
+    values.push_back(value);
+    p = endp;
+    if (*p == ',') {
+      ++p;
+    } else if (*p != '\0') {
+      std::cerr << "error: unexpected format\n";
+      std::exit(1);
     }
-    it = next;
+  }
+  if ((values.size() % 2) != 0) {
+    std::cerr << "error: odd number of values\n";
+    std::exit(1);
+  }
+  // Add values to map.
+  for (unsigned i = 0, e = values.size(); i != e; i += 2) {
+    map.insert(std::make_pair(values[i], values[i + 1]));
   }
   return map;
 }
