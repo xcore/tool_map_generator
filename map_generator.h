@@ -10,6 +10,7 @@
 #include <vector>
 #include <string>
 #include <iosfwd>
+#include <memory>
 
 namespace map_generator {
   class Step;
