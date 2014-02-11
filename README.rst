@@ -9,6 +9,8 @@ Map generator
 
 :Description: Generate code sequences / lookup tables mapping keys to values.
 
+.. image:: https://travis-ci.org/xcore/tool_map_generator.png?branch=master   :target: https://travis-ci.org/xcore/tool_map_generator
+
 Key Features
 ============
 
